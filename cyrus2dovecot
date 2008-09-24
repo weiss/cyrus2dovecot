@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: cyrus2dovecot,v 1.1 2008/09/22 08:36:44 holger Exp $
+# $Id: cyrus2dovecot,v 1.2 2008/09/24 09:52:33 holger Exp $
 #
 # Convert Cyrus folders to Dovecot.
 #
@@ -37,6 +37,8 @@ use Sys::Hostname;
 # "hash" character for that user name (i.e., "%h" is equivalent to "%1u" if the
 # first character of the user name is a lowercase letter), and any occurrence of
 # "%x" will be replaced by Cyrus' "fulldirhash" character for that user name.
+#
+# See "perldoc cyrus2dovecot" for details.
 #
 my %DEFAULT = (
 	dovecot_inbox => '/tmp/dovecot/%u/Maildir',
@@ -155,8 +157,8 @@ use constant MAILBOX_HEADER_MAGIC      =>
 #
 use constant UINT32_MAX => 4294967295;
 
-our $VERSION = sprintf('%d.%d (%04d-%02d-%02d)', q$Revision: 1.1 $ =~ /(\d+)/g,
-    q$Date: 2008/09/22 08:36:44 $ =~ /(\d{4})\/(\d{2})\/(\d{2})/);
+our $VERSION = sprintf('%d.%d (%04d-%02d-%02d)', q$Revision: 1.2 $ =~ /(\d+)/g,
+    q$Date: 2008/09/24 09:52:33 $ =~ /(\d{4})\/(\d{2})\/(\d{2})/);
 
 my $MYSELF = basename($0);
 my ($FOLDERS, $MAILS, $SIZE, $USER, $FROM_STDIN, $QUOTADATA, %CONF);
@@ -216,7 +218,7 @@ sub main () {
 
 		my $start = time;
 		my $meta = {};
-		my $d_inbox = $CONF{dovecot_inbox};
+		my $dovecot_inbox = $CONF{dovecot_inbox};
 		my $cyrus_inbox = $CONF{cyrus_inbox};
 		my $cyrus_seen = $CONF{cyrus_seen};
 		my $cyrus_sub = $CONF{cyrus_sub};
@@ -229,7 +231,7 @@ sub main () {
 		$FOLDERS = $MAILS = $SIZE = 0;
 
 		# Resolve "%u", "%h", "x", and "%<n>u" within pathnames.
-		fixpath($user, $d_inbox, $cyrus_inbox, $cyrus_seen,
+		fixpath($user, $dovecot_inbox, $cyrus_inbox, $cyrus_seen,
 		    $cyrus_sub);
 		fixpath($user, $cyrus_quota)
 		    if ($CONF{cyrus_quota} and $CONF{cyrus_quota_format} == 1);
@@ -237,7 +239,7 @@ sub main () {
 		# Do the actual conversion.
 		c_read_mailbox($meta, $user, $cyrus_inbox, $cyrus_seen,
 		    $cyrus_sub, $cyrus_quota);
-		d_write_mailbox($meta, $cyrus_inbox, $d_inbox);
+		d_write_mailbox($meta, $cyrus_inbox, $dovecot_inbox);
 
 		# Give some feedback.
 		print Dumper($meta) if $CONF{dump_meta};
@@ -404,7 +406,8 @@ sub _c_read_index ($);
 sub _c_read_old_seen ($);
 sub _c_read_legacy_quota ($);
 sub _c_read_skiplist_item ($$);
-sub _c_parse_seenuids ($);
+sub _c_parse_seendata ($);
+sub _c_seen ($$);
 sub _c_make_uid ($$);
 
 #
@@ -497,6 +500,7 @@ sub c_read_skiplist ($) {
 		return $skiplist;
 	}
 
+	debug('Reading:', $file);
 	open(my $handle, '<', $file) or error("Cannot open $file: $!");
 
 	# Read and check the header magic.
@@ -566,6 +570,7 @@ sub c_read_skiplist ($) {
 		}
 	}
 	close($handle) or error("Cannot close $file: $!");
+	debug('Done reading:', $file);
 	return $skiplist;
 }
 
@@ -643,7 +648,7 @@ sub _c_read_folders ($$$$) {
 	# user.foo.  While this could be fixed, a Maildir/.INBOX folder could
 	# not be accessed via Dovecot, anyway.
 	#
-	error("Cannot convert non-INBOX folder named INBOX.")
+	error('Cannot convert non-INBOX folder named INBOX.')
 	    if $box =~ /^$rootdir\/+INBOX$/;
 
 	# Let $box hold the path relative to the root directory (or "INBOX").
@@ -658,8 +663,8 @@ sub _c_read_folders ($$$$) {
 		$header->{folderuid} = _c_make_uid($index->{uidvalidity}, $box)
 		    if not $header->{folderuid};
 		$seen = defined($seendata) ?
-		    _c_parse_seenuids($seendata->{$header->{folderuid}}) :
-		    _c_parse_seenuids(_c_read_old_seen($boxpath));
+		    _c_parse_seendata($seendata->{$header->{folderuid}}) :
+		    _c_parse_seendata(_c_read_old_seen($boxpath));
 
 		# Autovivify "mail" in case this folder contains no e-mails.
 		$meta->{box}->{$box}->{mail} = {};
@@ -716,7 +721,7 @@ sub _c_read_folders ($$$$) {
 				$attr->{sysflags} = 0;
 				$attr->{internaldate} = $statlist[9];
 			}
-			$attr->{sysflags} |= FLAG_SEEN if $seen->{$uid};
+			$attr->{sysflags} |= FLAG_SEEN if _c_seen($uid, $seen);
 			$meta->{box}->{$box}->{mail}->{$uid} = $attr;
 		} else {
 			warning("Skipping $box/$file, dunno what it is.");
@@ -922,10 +927,16 @@ sub _c_read_skiplist_item ($$) {
 }
 
 #
-# Parse a seen UIDs string and return a reference to a hash which holds the
-# interesting data.  Die on error.
+# Parse the seen data for a mailbox and return a reference to a hash which holds
+# the seen message UIDs (saved in a format optimized for fast _c_seen() lookups)
+# and the last non-recent message UID.  Die on error.
 #
-sub _c_parse_seenuids ($) {
+sub _c_parse_seendata ($) {
+#
+# The third field of the seen data contains the last non-recent message UID, and
+# the fifth field contains a seen UIDs string which is in the following format
+# (see doc/internal/database-formats.html for a description of all seen data
+# fields):
 #
 # | /*
 # |  * Format of the seenuids string:
@@ -944,27 +955,43 @@ sub _c_parse_seenuids ($) {
 	my $seen;
 
 	if (defined($seendata)) {
-		my @ids = split(/\s+/, $seendata, 5);
+		my @fields = split(/\s+/, $seendata, 5);
 
-		error('Cannot parse seen UIDs string:', $seendata) if @ids != 5;
-		debug('Parsing seen UIDs string:', $seendata);
-		foreach my $uid (split(/,/, $ids[-1])) {
-			$uid =~ s/\s+//g;
-			debug('Parsing seen UID(s) substring:', $uid);
-			if ($uid =~ /^\d+:\d+$/) {
-				my ($n, $m) = sort {$a <=> $b} split(/:/, $uid);
-				$seen->{$_} = 1 for $n..$m;
-			} elsif ($uid =~ /^\d+$/) {
+		debug('Parsing seen data:', $seendata);
+		error('Cannot parse seen data:', $seendata)
+		    if @fields != 5;
+		$fields[4] =~ s/\s+//g;	# Cyrus sometimes adds a trailing tab.
+		foreach my $uid (split(/,/, $fields[4])) {
+			debug('Parsing seen UID(s):', $uid);
+			if ($uid =~ /^\d+$/) {
 				$seen->{$uid} = 1;
+			} elsif ($uid =~ /^(\d+):(\d+)$/) {
+				my ($n, $m) = ($2 > $1) ? ($1, $2) : ($2, $1);
+				push(@{ $seen->{ranges} },
+				    { min => $n, max => $m });
 			} else {
-				error('Cannot parse seen UIDs substring:', $uid);
+				error('Cannot parse seen UID(s):', $uid);
 			}
 		}
-		$seen->{nonrecent} = $ids[2];
+		$seen->{nonrecent} = $fields[2];
 	} else {
 		$seen->{nonrecent} = 0;
+		$seen->{ranges} = [];
 	}
 	return $seen;
+}
+
+#
+# Return true if the message with the given UID is seen, false otherwise.
+#
+sub _c_seen ($$) {
+	my ($uid, $seen) = @_;
+
+	return 1 if $seen->{$uid};
+	foreach my $range (@{ $seen->{ranges} }) {
+		return 1 if ($uid >= $range->{min} and $uid <= $range->{max});
+	}
+	return 0;
 }
 
 #
@@ -1575,3 +1602,14 @@ under the same terms as Perl itself.  See L<perlartistic>.  This program
 is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
+
+=head1 HISTORY
+
+	$Log: cyrus2dovecot,v $
+	Revision 1.2  2008/09/24 09:52:33  holger
+	Message seen states are now parsed more efficiently with regard
+	to performance and memory usage.  Apart from that, minor code
+	cleanups have been applied.
+
+	Revision 1.1  2008/09/22 08:36:44  holger
+	Initial release.
