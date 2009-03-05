@@ -116,7 +116,7 @@ sub makedir ($);
 sub readint ($$);
 sub xread ($$$);
 sub slurp ($);
-sub fixpath ($@);
+sub fixpath ($$@);
 sub c_fulldirhash ($);
 sub c_read_skiplist ($);
 sub c_read_mailbox ($$$$$);
@@ -169,18 +169,19 @@ GetOptions(
 	'cyrus_inbox|cyrus-inbox|C=s',
 	'cyrus_quota|cyrus-quota|Q=s',
 	'cyrus_quota_format|cyrus-quota-format|O=i',
-	'cyrus_quota_dir|cyrus-quota-dir|Y=s',
-	'cyrus_database_dir|cyrus-database-dir|X=s',
+	'cyrus_quota_dir|cyrus-quota-dir|B=s',
+	'cyrus_database_dir|cyrus-database-dir|A=s',
 	'cyrus_seen|cyrus-seen|S=s',
 	'cyrus_sub|cyrus-sub|U=s',
-	'dovecot_host|dovecot-host|H=s',
-	'dovecot_inbox|dovecot-inbox|D=s',
 	'default_quota|default-quota|N=s',
+	'dovecot_inbox|dovecot-inbox|D=s',
+	'dovecot_host|dovecot-host|H=s',
 	'dovecot_uidlist_format|dovecot-uidlist-format|F=i',
 	'dovecot_crlf|dovecot-crlf|c',
 	'dump_meta|dump-meta|m',
 	'quiet|q+',
 	'debug|d',
+	'bail|b',
 	'h',
 	'v'
 ) or usage;
@@ -242,9 +243,9 @@ sub main () {
 		$FOLDERS = $MAILS = $SIZE = 0;
 
 		# Resolve "%u", "%h", "x", and "%<n>u" within pathnames.
-		fixpath($user, $dovecot_inbox, $cyrus_inbox, $cyrus_seen,
-		    $cyrus_sub);
-		fixpath($user, $cyrus_quota)
+		fixpath(1, $user, $dovecot_inbox);
+		fixpath(0, $user, $cyrus_inbox, $cyrus_seen, $cyrus_sub);
+		fixpath(0, $user, $cyrus_quota)
 		    if ($CONF{cyrus_quota} and $CONF{cyrus_quota_format} == 1);
 
 		# Do the actual conversion.
@@ -298,6 +299,7 @@ sub warning (@) {
 
 	unshift(@message, '(warning)');
 	message(\*STDERR, @message);
+	exit 1 if $CONF{bail};
 }
 
 #
@@ -309,7 +311,7 @@ sub error (@) {
 
 	unshift(@message, '(error)');
 	message(\*STDERR, @message);
-	main;	# Continue with the next user (if any).
+	main unless $CONF{bail};	# Continue with the next user (if any).
 	exit 1;
 }
 
@@ -370,10 +372,15 @@ sub readint ($$) {
 sub xread ($$$) {
 	my ($file, $handle, $size) = @_;
 	my ($buf, $n);
+	my $offset = 0;
 
-	defined($n = read($handle, $buf, $size))
-	    or error("Cannot read $file: $!");
-	error("Read $n instead of $size bytes from $file.") if $n != $size;
+	do {
+		defined($n = read($handle, $buf, $size - $offset, $offset))
+		    or error("Cannot read $file: $!");
+		$offset += $n;
+	} while ($offset != $size and $n > 0);
+	error("EOF after reading $offset instead of $size bytes from $file.")
+	    if $offset != $size;
 	return $buf;
 }
 
@@ -391,7 +398,8 @@ sub slurp ($) {
 # Resolve "%u", "%h", "x", and "%<n>u" within pathnames.  Modify the specified
 # arguments directly (as opposed to returning the new pathnames).
 #
-sub fixpath ($@) {
+sub fixpath ($$@) {
+	my $fixdot = shift;
 	my $user = shift;
 	my @char = split(//, $user);
 	my $hash = $char[0];
@@ -401,6 +409,8 @@ sub fixpath ($@) {
 		# This is how Cyrus "hashes" non-[a-z]-characters.
 		$hash = ($hash =~ /^[A-Z]$/) ? lc($hash) : 'q';
 	}
+
+	$user =~ s/\^/./g if $fixdot;
 
 	for (@_) {
 		s/%u/$user/g;
@@ -530,7 +540,7 @@ sub c_read_skiplist ($) {
 		# Read the actual header.
 		$buf = xread($file, $handle, HEADER_SIZE);
 		my @header = unpack('N7', $buf);
-		error('Unknown skiplist database version:', $header[0])
+		warning('Unknown skiplist database version:', $header[0])
 		    if $header[0] != 1;
 		debug('Minor skiplist database version:', $header[1]);
 
@@ -608,19 +618,20 @@ sub c_read_mailbox ($$$$$) {
 	#
 	# Cyrus' subscription skiplist keys are in the form "user.<name>.<box>",
 	# where <name> is the user name and <box> the name of the subscribed
-	# folder.  We only save the <box> (or "&INBOX" for "user.<name>").  Note
-	# that the subscription skiplist values are empty.  Cyrus doesn't clean
-	# up subscriptions of folders which no longer exist (as per RFC 3501,
-	# 6.3.6.).  So, while at it, we check whether a folder exist before
-	# adding it to the list in order to straighten the subscriptions up.
+	# folder.  We only save the <box> (or "&INBOX" for "user.<name>").
+	# Cyrus doesn't clean up subscriptions of folders which no longer exist
+	# (as per RFC 3501, 6.3.6.).  So, while at it, we check whether a folder
+	# exists before adding it to the list in order to straighten up the
+	# subscriptions.  Note that the subscription skiplist values are empty.
 	#
+
 	foreach my $folder (keys %{ $meta->{box} }) {
 		$folder =~ s/\//./g;
 		$existing{$folder} = 1;
 	}
 	foreach my $folder (keys %{ c_read_skiplist($subfile) }) {
-		$folder =~ s/^user\.$USER$/&INBOX/;
-		$folder =~ s/^user\.$USER\.//;
+		$folder =~ s/^user\.\Q$USER\E$/&INBOX/;
+		$folder =~ s/^user\.\Q$USER\E\.//;
 		push(@subscriptions, $folder) if $existing{$folder};
 	}
 	$meta->{subscriptions} = \@subscriptions;
@@ -664,7 +675,7 @@ sub _c_read_folder ($$$$) {
 		$box = '&INBOX';
 	} else {
 		$box = $boxpath;
-		$box=~ s/^$rootdir\/+//;
+		$box =~ s/^\Q$rootdir\E\/+//;
 	}
 
 	debug('Looking at folder:', $box);
@@ -788,7 +799,7 @@ sub _c_read_header ($) {
 		$header->{userflags} = $2;
 		$header->{folderacl} = $3;
 	} else {
-		error("Cannot parse $file: One or more fields missing");
+		error("Cannot parse $file: Too many or too few fields ");
 	}
 	$header->{userflags} =~ s/\s+$//;	# Cyrus adds a trailing space.
 
@@ -858,12 +869,11 @@ sub _c_read_index ($) {
 
 		#
 		# Read and save the system and user flags.  Note that the size
-		# of the user flags bitmask is MAX_USER_FLAGS / 32.  In all
+		# of the user flags bitmask is MAX_USER_FLAGS bits.  In all
 		# Cyrus versions we checked (1.4, 2.1.18, 2.2.12, and 2.3.12p2),
-		# MAX_USER_FLAGS is defined to 128 by default, so we'll read 4
-		# bytes.  If this is ever changed, the number of bytes to skip
-		# at the end of this loop (currently $recordsize - 40) must be
-		# adjusted accordingly.
+		# MAX_USER_FLAGS is defined to 128 by default.  However, as we
+		# only make use of the first 26 user-defined keywords, we read
+		# the first 4 bytes and ignore the rest.
 		#
 		seek($handle, 24, SEEK_CUR) or error('Cannot seek in:', $file);
 		$data->{$uid}->{sysflags} = readint($file, $handle);
@@ -975,9 +985,8 @@ sub _c_parse_seendata ($) {
 	if (defined($seendata)) {
 		my @fields = split(/\s+/, $seendata, 5);
 
+		error('Cannot parse seen data:', $seendata) if @fields != 5;
 		debug('Parsing seen data:', $seendata);
-		error('Cannot parse seen data:', $seendata)
-		    if @fields != 5;
 
 		$fields[4] =~ s/\s//g;	# Cyrus sometimes adds a trailing tab.
 		$fields[2] =~ s/\s//g;	# Just to make sure.
@@ -1163,8 +1172,8 @@ sub d_write_mailbox ($$$) {
 			    $#{ $box->{keywords} });
 			my $d_mailpath = "$d_boxpath/$subdir/$d_mail";
 
-			error("Cannot rename $d_temppath to: $d_mailpath")
-			    if not rename($d_temppath, $d_mailpath);
+			rename($d_temppath, $d_mailpath)
+			    or error("Cannot move $d_temppath to: $d_mailpath");
 
 			# Set the e-mail's last access and modification times.
 			utime($attr->{internaldate}, $attr->{internaldate},
@@ -1346,7 +1355,9 @@ cyrus2dovecot - convert Cyrus folders to Dovecot
 =head1 SYNOPSIS
 
 B<cyrus2dovecot>
-[B<-cdmq>[B<q>]]
+[B<-bcdmq>[B<q>]]
+S<[B<-A> I<cyrus-database-dir>]>
+S<[B<-B> I<cyrus-quota-dir>]>
 S<[B<-C> I<cyrus-inbox>]>
 S<[B<-D> I<dovecot-inbox>]>
 S<[B<-E> I<edit-foldernames>]>
@@ -1357,8 +1368,6 @@ S<[B<-O> I<cyrus-quota-format>]>
 S<[B<-Q> I<cyrus-quota>]>
 S<[B<-S> I<cyrus-seen>]>
 S<[B<-U> I<cyrus-sub>]>
-S<[B<-X> I<cyrus-database-dir>]>
-S<[B<-Y> I<cyrus-quota-dir>]>
 [I<user> ...]
 
 B<cyrus2dovecot>
@@ -1394,6 +1403,27 @@ The default settings can be found (and modified) at the top of the
 B<cyrus2dovecot> script.
 
 =over 8
+
+=item B<-A>, B<--cyrus-database-dir=>I<PATH>
+
+Set B<--cyrus-seen=>I<PATH>F</%u.seen> and
+B<--cyrus-sub=>I<PATH>F</%u.sub>.  The latter options override this one.
+
+=item B<-B>, B<--cyrus-quota-dir=>I<PATH>
+
+Set B<--cyrus-quota=>I<PATH>F</user.%u> and
+B<--cyrus-quota-format=>C<1>.  The latter options override this one.
+
+=item B<-b>, B<--bail>
+
+Bail out immediately on any warnings and errors.  If this flag is not
+specified and a warning occurs, B<cyrus2dovecot> prints a message to the
+standard error output and then tries to continue the conversion.  If
+this flag is not specified and a non-fatal error occurs,
+B<cyrus2dovecot> prints a message to the standard error output and then
+tries to convert the e-mails of the remaining I<user>s (if any).  (Note
+that B<cyrus2dovecot> always bails out immediately on warnings generated
+by the Perl interpreter, as they indicate B<cyrus2dovecot> bugs.)
 
 =item B<-C>, B<--cyrus-inbox=>I<PATH>
 
@@ -1485,9 +1515,10 @@ printed to the standard error output.
 
 =item B<-S>, B<--cyrus-seen=>I<PATH>
 
-Use this I<PATH> to the I<user>'s seen database file in Cyrus.  If
-F<cyrus.seen> is specified as the I<PATH>, B<cyrus2dovecot> expects an
-old-style F<cyrus.seen> file in every Cyrus folder.
+Use this I<PATH> to the I<user>'s seen database file in Cyrus.  If an
+"old-style" F<cyrus.seen> file exists within each Cyrus folder (as opposed to a
+central F<cyrus.seen> database for all folders of a I<user>), F<cyrus.seen>
+must be specified (literally) as the I<PATH>.
 
 =item B<-U>, B<--cyrus-sub=>I<PATH>
 
@@ -1498,25 +1529,12 @@ Cyrus.
 
 Print version information to the standard output and exit.
 
-=item B<-X>, B<--cyrus-database-dir=>I<PATH>
-
-Set B<--cyrus-seen=>I<PATH>F</%u.seen> and
-B<--cyrus-sub=>I<PATH>F</%u.sub>.  The latter options override this one.
-
-=item B<-Y>, B<--cyrus-quota-dir=>I<PATH>
-
-Set B<--cyrus-quota=>I<PATH>F</user.%u> and
-B<--cyrus-quota-format=>C<1>.  The latter options override this one.
-
 =back
 
 =head1 RETURN VALUE
 
-B<cyrus2dovecot> exits 0 on success.  If a non-fatal error occurs,
-B<cyrus2dovecot> prints a message to the standard error output and then
-tries to convert the e-mails of the remaining I<user>s (if any), but it
-exits E<gt>0 regardless of whether or not those conversions succeed.  If
-a fatal error occurs, B<cyrus2dovecot> exits E<gt>0 immediately.
+B<cyrus2dovecot> exits 0 on success, and E<gt>0 if one or more errors
+occur during the conversion of the e-mails of one or more I<user>s.
 
 =head1 EXAMPLES
 
@@ -1531,9 +1549,9 @@ following command would convert all e-mails of the I<user>s "bill" and
 F</tmp/dovecot> (including F<maildirsize> files for both users if their
 quota limits are found):
 
-	cyrus2dovecot --cyrus-inbox /var/spool/imap/user/%u     \
-	              --cyrus-database-dir /var/imap/user/%h    \
+	cyrus2dovecot --cyrus-database-dir /var/imap/user/%h    \
 	              --cyrus-quota-dir /var/imap/quota/%h      \
+	              --cyrus-inbox /var/spool/imap/user/%u     \
 	              --dovecot-inbox /tmp/dovecot/%u/Maildir   \
 	              bill george
 
@@ -1590,9 +1608,9 @@ by B<cyrus2dovecot> using a command such as the following:
 
 =head1 CAVEATS
 
-B<cyrus2dovecot> assumes that the user has no e-mails in Dovecot yet and
-that neither his Cyrus folders nor his Dovecot folders will be accessed
-by another process during the conversion.
+B<cyrus2dovecot> assumes that the I<user> has no e-mails in Dovecot yet
+and that neither his Cyrus folders nor his Dovecot folders will be
+accessed by another process during the conversion.
 
 If C<%I<n>u> is specified within any I<PATH> on the command line, all
 I<user> names must have a length of at least I<n> characters.
