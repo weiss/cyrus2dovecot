@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: cyrus2dovecot,v 1.2 2008/09/24 09:52:33 holger Exp $
+# $Id: cyrus2dovecot,v 1.3 2008/10/05 17:45:06 holger Exp $
 #
 # Convert Cyrus folders to Dovecot.
 #
@@ -20,8 +20,8 @@
 #
 require 5.006;	# We need Perl >= 5.6.0 for our open() calls.
 
-use warnings;
 use strict;
+use warnings;
 use Data::Dumper;
 use File::Basename;
 use Fcntl qw(:seek);
@@ -43,17 +43,17 @@ use Sys::Hostname;
 my %DEFAULT = (
 	dovecot_inbox => '/tmp/dovecot/%u/Maildir',
 	cyrus_inbox => '/var/spool/imap/user/%u',
-	cyrus_sub => '/var/imap/user/%h/%u.sub',
 	cyrus_seen => '/var/imap/user/%h/%u.seen',
+	cyrus_sub => '/var/imap/user/%h/%u.sub',
 	cyrus_quota => undef,
-	cyrus_quota_format => 1,        # Cyrus quota format (1 for legacy).
+	cyrus_quota_format => 1,        # Cyrus quota format (1: legacy).
 	dovecot_uidlist_format => 3,    # Create this dovecot-uidlist format.
 	dovecot_host => hostname,       # The host name for Maildir++ filenames.
 	dovecot_crlf => 0,              # Use CR+LF instead of LF in Dovecot?
-	default_quota => 0,             # Use this quota as a fallback.
+	default_quota => 0,             # Use this quota as fallback (0: none).
 	dump_meta => 0,                 # Print the metadata structure?
 	debug => 0,                     # Print debug output?
-	quiet => 0,                     # Suppress the standard output?
+	quiet => 0,                     # Be quiet (0: no, 1: somewhat, 2: yes)?
 	edit_foldernames => []          # List of folder name substitutions.
 );
 
@@ -69,36 +69,36 @@ my %DEFAULT = (
 #
 #    	$meta->{subscriptions} = [ 'ac', 'ac/dc' ]
 #    	     ->{quota} = 2147483648
-#    	     ->{box}->{'INBOX'}->{uidvalidity} = 1107601073
-#    	                       ->{uidnext} = 3
-#    	                       ->{nonrecent} = 2	# Last non-recent UID.
-#    	                       ->{keywords}  = [ 'Junk', '$Label1' ]
-#    	                       ->{mail}->{1}->{internaldate} = 1107601472
-#    	                                    ->{sysflags} = $sysmask
-#    	                                    ->{usrflags} = $usrmask
-#    	                                 {2}->{internaldate} = 1107601543
-#    	                                    ->{sysflags} = $sysmask
-#    	                                    ->{usrflags} = $usrmask
-#    	            ->{'ac'}   ->{uidvalidity} = 1108639232
-#    	                       ->{uidnext} = 3
-#    	                       ->{nonrecent} = 1	# Last non-recent UID.
-#    	                       ->{keywords}  = [ 'Private', 'Work' ]
-#    	                       ->{mail}->{1}->{internaldate} = 1108639290
-#    	                                    ->{sysflags} = $sysmask
-#    	                                    ->{usrflags} = $usrmask
-#    	                                 {2}->{internaldate} = 1108639299
-#    	                                    ->{sysflags} = $sysmask
-#    	                                    ->{usrflags} = $usrmask
-#    	            ->{'ac/dc'}->{uidvalidity} = 1109821442
-#    	                       ->{uidnext} = 3
-#    	                       ->{nonrecent} = 1	# Last non-recent UID.
-#    	                       ->{keywords}  = [ 'Rock', 'Pop' ]
-#    	                       ->{mail}->{1}->{internaldate} = 1109821455
-#    	                                    ->{sysflags} = $sysmask
-#    	                                    ->{usrflags} = $usrmask
-#    	                                 {2}->{internaldate} = 1109821500
-#    	                                    ->{sysflags} = $sysmask
-#    	                                    ->{usrflags} = $usrmask
+#    	     ->{box}->{'&INBOX'}->{uidvalidity} = 1107601073
+#    	                        ->{uidnext} = 3
+#    	                        ->{nonrecent} = 2	# Last non-recent UID.
+#    	                        ->{keywords}  = [ 'Junk', '$Label1' ]
+#    	                        ->{mail}->{1}->{internaldate} = 1107601472
+#    	                                     ->{sysflags} = $sysmask
+#    	                                     ->{usrflags} = $usrmask
+#    	                                  {2}->{internaldate} = 1107601543
+#    	                                     ->{sysflags} = $sysmask
+#    	                                     ->{usrflags} = $usrmask
+#    	            ->{'ac'}    ->{uidvalidity} = 1108639232
+#    	                        ->{uidnext} = 3
+#    	                        ->{nonrecent} = 1	# Last non-recent UID.
+#    	                        ->{keywords}  = [ 'Private', 'Work' ]
+#    	                        ->{mail}->{1}->{internaldate} = 1108639290
+#    	                                     ->{sysflags} = $sysmask
+#    	                                     ->{usrflags} = $usrmask
+#    	                                  {2}->{internaldate} = 1108639299
+#    	                                     ->{sysflags} = $sysmask
+#    	                                     ->{usrflags} = $usrmask
+#    	            ->{'ac/dc'} ->{uidvalidity} = 1109821442
+#    	                        ->{uidnext} = 3
+#    	                        ->{nonrecent} = 1	# Last non-recent UID.
+#    	                        ->{keywords}  = [ 'Rock', 'Pop' ]
+#    	                        ->{mail}->{1}->{internaldate} = 1109821455
+#    	                                     ->{sysflags} = $sysmask
+#    	                                     ->{usrflags} = $usrmask
+#    	                                  {2}->{internaldate} = 1109821500
+#    	                                     ->{sysflags} = $sysmask
+#    	                                     ->{usrflags} = $usrmask
 #
 # 2) We call d_write_mailbox() which creates a Dovecot Maildir++ directory
 #    including all subfolders, writes the metadata, and converts the actual
@@ -119,7 +119,7 @@ sub slurp ($);
 sub fixpath ($@);
 sub c_fulldirhash ($);
 sub c_read_skiplist ($);
-sub c_read_mailbox ($$$$$$);
+sub c_read_mailbox ($$$$$);
 sub d_write_mailbox ($$$);
 
 #
@@ -140,13 +140,13 @@ use constant DELETE            => 4;
 use constant COMMIT            => 255;
 use constant DUMMY             => 257;
 use constant HEADER_SIZE       => 28;
-use constant HEADER_MAGIC_SIZE => 20;
+use constant HEADER_MAGIC_SIZE => 20;	# length(HEADER_MAGIC)
 use constant HEADER_MAGIC      => "\241\002\213\015skiplist file\0\0\0";
 
 #
 # Cyrus mailbox header constants.
 #
-use constant MAILBOX_HEADER_MAGIC_SIZE => 115;
+use constant MAILBOX_HEADER_MAGIC_SIZE => 115;	# length(MAILBOX_HEADER_MAGIC)
 use constant MAILBOX_HEADER_MAGIC      =>
     "\241\002\213\015Cyrus mailbox header\n" .
     "\"The best thing about this system was that it had lots of goals.\"\n" .
@@ -157,8 +157,8 @@ use constant MAILBOX_HEADER_MAGIC      =>
 #
 use constant UINT32_MAX => 4294967295;
 
-our $VERSION = sprintf('%d.%d (%04d-%02d-%02d)', q$Revision: 1.2 $ =~ /(\d+)/g,
-    q$Date: 2008/09/24 09:52:33 $ =~ /(\d{4})\/(\d{2})\/(\d{2})/);
+our $VERSION = sprintf('%d.%d (%04d-%02d-%02d)', q$Revision: 1.3 $ =~ /(\d+)/g,
+    q$Date: 2008/10/05 17:45:06 $ =~ /(\d{4})\/(\d{2})\/(\d{2})/);
 
 my $MYSELF = basename($0);
 my ($FOLDERS, $MAILS, $SIZE, $USER, $FROM_STDIN, $QUOTADATA, %CONF);
@@ -169,6 +169,8 @@ GetOptions(
 	'cyrus_inbox|cyrus-inbox|C=s',
 	'cyrus_quota|cyrus-quota|Q=s',
 	'cyrus_quota_format|cyrus-quota-format|O=i',
+	'cyrus_quota_dir|cyrus-quota-dir|Y=s',
+	'cyrus_database_dir|cyrus-database-dir|X=s',
 	'cyrus_seen|cyrus-seen|S=s',
 	'cyrus_sub|cyrus-sub|U=s',
 	'dovecot_host|dovecot-host|H=s',
@@ -177,8 +179,8 @@ GetOptions(
 	'dovecot_uidlist_format|dovecot-uidlist-format|F=i',
 	'dovecot_crlf|dovecot-crlf|c',
 	'dump_meta|dump-meta|m',
+	'quiet|q+',
 	'debug|d',
-	'quiet|q',
 	'h',
 	'v'
 ) or usage;
@@ -190,8 +192,17 @@ if ($CONF{v}) {
 	exec($0, '--version') or die;
 }
 
+if (defined($CONF{cyrus_database_dir})) {
+	$DEFAULT{cyrus_seen} = $CONF{cyrus_database_dir} . '/%u.seen';
+	$DEFAULT{cyrus_sub} = $CONF{cyrus_database_dir} . '/%u.sub';
+}
+if (defined($CONF{cyrus_quota_dir})) {
+	$DEFAULT{cyrus_quota} = $CONF{cyrus_quota_dir} . '/user.%u';
+	$DEFAULT{cyrus_quota_format} = 1;
+}
+
 foreach my $opt (keys %DEFAULT) {
-	$CONF{$opt} = $DEFAULT{$opt} if not exists($CONF{$opt});
+	$CONF{$opt} = $DEFAULT{$opt} unless exists($CONF{$opt});
 }
 
 fatal('Option dovecot-uidlist-format must be set to: 1 or 3')
@@ -237,25 +248,26 @@ sub main () {
 		    if ($CONF{cyrus_quota} and $CONF{cyrus_quota_format} == 1);
 
 		# Do the actual conversion.
-		c_read_mailbox($meta, $user, $cyrus_inbox, $cyrus_seen,
-		    $cyrus_sub, $cyrus_quota);
+		c_read_mailbox($meta, $cyrus_inbox, $cyrus_seen, $cyrus_sub,
+		    $cyrus_quota);
 		d_write_mailbox($meta, $cyrus_inbox, $dovecot_inbox);
 
 		# Give some feedback.
 		print Dumper($meta) if $CONF{dump_meta};
 		info(sprintf('%u messages in %u folders (%.1f MiB, %u s)',
 		    $MAILS, $FOLDERS, $SIZE / 1024 / 1024, time - $start))
-		    unless $CONF{quiet};
+		    unless $CONF{quiet} >= 2;
 
 		debug("Done converting the e-mail folders of $user.");
 	}
 }
 
 #
-# Print usage information to the standard error output and die.
+# Print usage information to the standard error output and exit >0.
 #
 sub usage () {
-	exec("$0 --help >&2") or die;
+	system("$0 --help >&2");
+	exit 1;
 }
 
 #
@@ -327,7 +339,7 @@ sub message ($@) {
 
 #
 # Create the specified directory, and recursively create parent directories as
-# needed.  Die on error.
+# needed.  Bail out on error.
 #
 sub makedir ($) {
 	my $dir = shift;
@@ -343,7 +355,7 @@ sub makedir ($) {
 
 #
 # Read and return a 32-bit integer which is in "network" (big-endian) order.
-# Die on error.
+# Bail out on error.
 #
 sub readint ($$) {
 	my ($file, $handle) = @_;
@@ -353,7 +365,7 @@ sub readint ($$) {
 }
 
 #
-# Read the specified number of bytes or die.
+# Read the specified number of bytes or bail out.
 #
 sub xread ($$$) {
 	my ($file, $handle, $size) = @_;
@@ -400,7 +412,7 @@ sub fixpath ($@) {
 
 # ----- Cyrus subroutines. -----------------------------------------------------
 
-sub _c_read_folders ($$$$);
+sub _c_read_folder ($$$$);
 sub _c_read_header ($);
 sub _c_read_index ($);
 sub _c_read_old_seen ($);
@@ -411,8 +423,9 @@ sub _c_seen ($$);
 sub _c_make_uid ($$);
 
 #
-# Return Cyrus' "fulldirhash" character for the given user name.  See also the
-# "dir_hash_c" subroutine in tools/rehash.
+# Return Cyrus' "fulldirhash" character for the given user name.  See also:
+#
+# tools/rehash:dir_hash_c()
 #
 sub c_fulldirhash ($) {
 	my $user = shift;
@@ -424,7 +437,7 @@ sub c_fulldirhash ($) {
 
 #
 # Read a "skiplist" database file (or a flat text file) and return a reference
-# to a hash containing the records.  Die on error.
+# to a hash containing the records.  Bail out on error.
 #
 sub c_read_skiplist ($) {
 #
@@ -491,29 +504,35 @@ sub c_read_skiplist ($) {
 	my ($buf, $n);
 
 	if (not -e $file) {
+		my $message = "File not found, pretending it's empty: $file";
+
 		#
 		# The seen or subscription database will not be created until
 		# the user saw an e-mail or subscribed a folder.  So, we just
-		# return an empty skiplist.
+		# return an empty $skiplist.
 		#
-		debug("$file doesn't exist, I'll pretend it's empty.");
+		$CONF{quiet} ? debug($message) : info($message);
 		return $skiplist;
 	}
 
 	debug('Reading:', $file);
 	open(my $handle, '<', $file) or error("Cannot open $file: $!");
 
-	# Read and check the header magic.
+	# Read the header magic.
 	defined($n = read($handle, $buf, HEADER_MAGIC_SIZE))
 	    or error("Cannot read $file: $!");
 
+	#
+	# Assume it's a skiplist file if the header magic is okay.  Otherwise,
+	# assume it's a flat text file.
+	#
 	if ($n == HEADER_MAGIC_SIZE and $buf eq HEADER_MAGIC) {
 		# Read the actual header.
 		$buf = xread($file, $handle, HEADER_SIZE);
 		my @header = unpack('N7', $buf);
-		error('Unknown skiplist DB version:', $header[0])
+		error('Unknown skiplist database version:', $header[0])
 		    if $header[0] != 1;
-		debug('Minor skiplist DB version:', $header[1]);
+		debug('Minor skiplist database version:', $header[1]);
 
 		# Read the records.
 		while ($n = read($handle, $buf, 4)) {
@@ -557,7 +576,6 @@ sub c_read_skiplist ($) {
 			1 while readint($file, $handle) != 0xFFFFFFFF;
 		}
 	} else {
-		# Assume it's a flat text file if the header magic is missing.
 		debug('Parsing as a flat text file:', $file);
 		seek($handle, 0, SEEK_SET) or error('Cannot seek in:', $file);
 		while (<$handle>) {
@@ -576,34 +594,33 @@ sub c_read_skiplist ($) {
 
 #
 # Read all global and folder-specific metadata of a user into the given data
-# structure.  Die on error.
+# structure.  Bail out on error.
 #
-sub c_read_mailbox ($$$$$$) {
-	my ($meta, $user, $rootdir, $seenfile, $subfile, $quotafile) = @_;
+sub c_read_mailbox ($$$$$) {
+	my ($meta, $rootdir, $seenfile, $subfile, $quotafile) = @_;
 	my (%existing, @subscriptions);
 	my $seendata = ($seenfile eq 'cyrus.seen') ? undef :
 	    c_read_skiplist($seenfile);
 
 	debug('Reading Cyrus metadata.');
-	_c_read_folders($meta, $rootdir, $rootdir, $seendata);
+	_c_read_folder($meta, $rootdir, $rootdir, $seendata);
 
 	#
 	# Cyrus' subscription skiplist keys are in the form "user.<name>.<box>",
 	# where <name> is the user name and <box> the name of the subscribed
-	# folder.  We only save the latter (or "INBOX" for "user.<name>").  Note
+	# folder.  We only save the <box> (or "&INBOX" for "user.<name>").  Note
 	# that the subscription skiplist values are empty.  Cyrus doesn't clean
 	# up subscriptions of folders which no longer exist (as per RFC 3501,
-	# 6.3.6.).  While at it, we check whether a folder exist before adding
-	# it to the list in order to straighten the subscriptions up.
+	# 6.3.6.).  So, while at it, we check whether a folder exist before
+	# adding it to the list in order to straighten the subscriptions up.
 	#
 	foreach my $folder (keys %{ $meta->{box} }) {
 		$folder =~ s/\//./g;
 		$existing{$folder} = 1;
 	}
 	foreach my $folder (keys %{ c_read_skiplist($subfile) }) {
-		$folder =~ s/^user\.$user$/INBOX/;
-		$folder =~ s/^user\.[^\.]+\.(.+)$/$1/;
-		$folder =~ s/\//./g;	# Probably not necessary.
+		$folder =~ s/^user\.$USER$/&INBOX/;
+		$folder =~ s/^user\.$USER\.//;
 		push(@subscriptions, $folder) if $existing{$folder};
 	}
 	$meta->{subscriptions} = \@subscriptions;
@@ -616,17 +633,17 @@ sub c_read_mailbox ($$$$$$) {
 	if ($quotafile) {
 		if ($CONF{cyrus_quota_format} == 1) {
 			$meta->{quota} = _c_read_legacy_quota($quotafile);
-		} elsif (defined($QUOTADATA->{"user.$user"})) {
-			$meta->{quota} = $QUOTADATA->{"user.$user"};
+		} elsif (defined($QUOTADATA->{"user.$USER"})) {
+			$meta->{quota} = $QUOTADATA->{"user.$USER"};
 			$meta->{quota} =~ s/^\d+\s+(\d+)$/$1/;
-			error('Cannot parse quota:', $QUOTADATA->{"user.$user"})
+			error('Cannot parse quota:', $QUOTADATA->{"user.$USER"})
 			    if $meta->{quota} !~ /^\d+$/;
 		}
 		warning('No quota information available.')
 		    if (not $meta->{quota} and not $CONF{default_quota});
 	}
 	if ($meta->{quota}) {
-		$meta->{quota} *= 1024;	# Kilobytes to bytes,
+		$meta->{quota} *= 1024;	# Kilobytes to bytes.
 	} else {
 		$meta->{quota} = $CONF{default_quota} || 0;
 	}
@@ -635,27 +652,22 @@ sub c_read_mailbox ($$$$$$) {
 }
 
 #
-# Read and save the folder-specific metadata for the given mailbox into the
-# given data structure.  Recurse into subdirectories.  Die on error.
+# Read and save the folder-specific metadata for the given folder into the given
+# data structure.  Recurse into subdirectories.  Bail out on error.
 #
-sub _c_read_folders ($$$$) {
+sub _c_read_folder ($$$$) {
 	my ($meta, $rootdir, $boxpath, $seendata) = @_;
-	my $box = ($boxpath eq $rootdir) ? 'INBOX' : $boxpath;
-	my ($mailfolder, $index, $seen);
+	my ($box, $mailfolder, $index, $seen);
 
-	#
-	# Currently, we wouldn't be able to distinguish user.foo.INBOX from
-	# user.foo.  While this could be fixed, a Maildir/.INBOX folder could
-	# not be accessed via Dovecot, anyway.
-	#
-	error('Cannot convert non-INBOX folder named INBOX.')
-	    if $box =~ /^$rootdir\/+INBOX$/;
-
-	# Let $box hold the path relative to the root directory (or "INBOX").
-	$box =~ s/^$rootdir\/+//;
+	# Let $box hold the path relative to the root directory (or "&INBOX").
+	if ($boxpath eq $rootdir) {
+		$box = '&INBOX';
+	} else {
+		$box = $boxpath;
+		$box=~ s/^$rootdir\/+//;
+	}
 
 	debug('Looking at folder:', $box);
-
 	if (-e "$boxpath/cyrus.header" and -e "$boxpath/cyrus.index") {
 		# Collect this folder's metadata.
 		my $header = _c_read_header($boxpath);
@@ -685,7 +697,7 @@ sub _c_read_folders ($$$$) {
 		# other folders which might be Cyrus mailboxes (unless we're in
 		# the INBOX, in which case something is going wrong).
 		#
-		error('No Cyrus INBOX at:', $boxpath) if $box eq 'INBOX';
+		error('No Cyrus INBOX at:', $boxpath) if $box eq '&INBOX';
 		debug("Skipping $boxpath as it's not a Cyrus mailbox.");
 		$mailfolder = 0;
 	}
@@ -698,7 +710,7 @@ sub _c_read_folders ($$$$) {
 
 		if (-d $path) {
 			# Recurse into subfolders.
-			_c_read_folders($meta, $rootdir, $path, $seendata);
+			_c_read_folder($meta, $rootdir, $path, $seendata);
 		} elsif ($mailfolder and $file =~ /^(\d+)\.$/) {
 			my $uid = $1;
 			my $attr;
@@ -733,8 +745,8 @@ sub _c_read_folders ($$$$) {
 
 #
 # Read a mailbox header file and return a reference to a hash which holds the
-# data.  Die on error.  See doc/internal/mailbox-format.html for details on the
-# format of the mailbox header file.
+# data.  Bail out on error.  See doc/internal/mailbox-format.html for details on
+# the format of the mailbox header file.
 #
 sub _c_read_header ($) {
 #
@@ -790,8 +802,8 @@ sub _c_read_header ($) {
 
 #
 # Read a mailbox index file and return a reference to a hash which holds the
-# interesting data.  Die on error.  See doc/internal/mailbox-format.html for
-# details on the format of the mailbox index file.  See also:
+# interesting data.  Bail out on error.  See doc/internal/mailbox-format.html
+# for details on the format of the mailbox index file.  See also:
 #
 # imap/mailbox.h and imap/mailbox.c:mailbox_read_index_header()
 #
@@ -824,10 +836,10 @@ sub _c_read_index ($) {
 	# As we try to parse future index file formats (i.e., we don't bail out
 	# if the $version is unknown), we do at least a dumb consistency check:
 	# Cyrus sets the UIDVALIDITY of a folder to its creation date, so let's
-	# make sure its value is >= 600000000 (1989-01-05 11:40:00).
+	# spit out a warning if its value is < 300000000 (1979-07-05 06:20:00).
 	#
-	error("Cannot parse $file: UIDVALIDITY is", $data->{uidvalidity})
-	    if $data->{uidvalidity} < 600000000;
+	warning("UIDVALIDITY looks wrong in $file:", $data->{uidvalidity})
+	    if $data->{uidvalidity} < 300000000;
 
 	seek($handle, $headersize, SEEK_SET) or error('Cannot seek in:', $file);
 
@@ -840,15 +852,16 @@ sub _c_read_index ($) {
 
 		# Read, save, and "check" (see above) the INTERNALDATE.
 		$data->{$uid}->{internaldate} = readint($file, $handle);
-		error("Cannot parse $file: INTERNALDATE is",
+		warning("INTERNALDATE of message $uid looks wrong in $file:",
 		    $data->{$uid}->{internaldate})
-		    if $data->{$uid}->{internaldate} < 600000000;
+		    if $data->{$uid}->{internaldate} < 300000000;
 
 		#
 		# Read and save the system and user flags.  Note that the size
-		# of the user flags bitmask is MAX_USER_FLAGS / 32.  At least in
-		# Cyrus 2.2.12, MAX_USER_FLAGS is 128 by default, so we'll read
-		# 4 bytes.  If this is ever changed, the number of bytes to skip
+		# of the user flags bitmask is MAX_USER_FLAGS / 32.  In all
+		# Cyrus versions we checked (1.4, 2.1.18, 2.2.12, and 2.3.12p2),
+		# MAX_USER_FLAGS is defined to 128 by default, so we'll read 4
+		# bytes.  If this is ever changed, the number of bytes to skip
 		# at the end of this loop (currently $recordsize - 40) must be
 		# adjusted accordingly.
 		#
@@ -866,8 +879,8 @@ sub _c_read_index ($) {
 }
 
 #
-# Read a Cyrux 1.x seen file and return the seen UIDs string or undef if the
-# seen file is empty.  Die on error.
+# Read a Cyrux 1.x seen file and return the seen state data or undef if the seen
+# file is empty.  Bail out on error.
 #
 sub _c_read_old_seen ($) {
 	my $boxpath = shift;
@@ -886,13 +899,15 @@ sub _c_read_old_seen ($) {
 
 #
 # Read a legacy quota file and return the quota limit (specified in kilobytes)
-# or undef if the specified file does not exist.  Die on error.
+# or undef if the specified file does not exist.  Bail out on error.
 #
 sub _c_read_legacy_quota ($) {
 	my $file = shift;
 
 	if (not -e $file) {
-		debug('Legacy quota file does not exist:', $file);
+		my $message = "Legacy quota file not found: $file";
+
+		$CONF{quiet} ? debug($message) : info($message);
 		return undef;
 	}
 
@@ -910,7 +925,7 @@ sub _c_read_legacy_quota ($) {
 
 #
 # Read a skiplist string and return the string or undef if the string's length
-# is zero.  Die on error.
+# is zero.  Bail out on error.
 #
 sub _c_read_skiplist_item ($$) {
 	my ($file, $handle) = @_;
@@ -929,7 +944,7 @@ sub _c_read_skiplist_item ($$) {
 #
 # Parse the seen data for a mailbox and return a reference to a hash which holds
 # the seen message UIDs (saved in a format optimized for fast _c_seen() lookups)
-# and the last non-recent message UID.  Die on error.
+# and the last non-recent message UID.  Bail out on error.
 #
 sub _c_parse_seendata ($) {
 #
@@ -954,13 +969,19 @@ sub _c_parse_seendata ($) {
 	my $seendata = shift;
 	my $seen;
 
+	$seen->{ranges} = [];
+	$seen->{nonrecent} = 0;
+
 	if (defined($seendata)) {
 		my @fields = split(/\s+/, $seendata, 5);
 
 		debug('Parsing seen data:', $seendata);
 		error('Cannot parse seen data:', $seendata)
 		    if @fields != 5;
-		$fields[4] =~ s/\s+//g;	# Cyrus sometimes adds a trailing tab.
+
+		$fields[4] =~ s/\s//g;	# Cyrus sometimes adds a trailing tab.
+		$fields[2] =~ s/\s//g;	# Just to make sure.
+
 		foreach my $uid (split(/,/, $fields[4])) {
 			debug('Parsing seen UID(s):', $uid);
 			if ($uid =~ /^\d+$/) {
@@ -973,10 +994,9 @@ sub _c_parse_seendata ($) {
 				error('Cannot parse seen UID(s):', $uid);
 			}
 		}
+		error('Cannot parse last non-recent UID:', $fields[2])
+		    if $fields[2] !~ /^\d+$/;
 		$seen->{nonrecent} = $fields[2];
-	} else {
-		$seen->{nonrecent} = 0;
-		$seen->{ranges} = [];
 	}
 	return $seen;
 }
@@ -1003,7 +1023,7 @@ sub _c_make_uid ($$) {
 	my ($uidvalidity, $box) = @_;
 	my $hash = 0;
 
-	if ($box eq 'INBOX') {
+	if ($box eq '&INBOX') {
 		$box = "user.$USER";
 	} else {
 		$box =~ s/\//./g;
@@ -1016,19 +1036,20 @@ sub _c_make_uid ($$) {
 		$hash %= 2147484043;
 	}
 
-	my $uid = sprintf("%08lx%08lx", $hash, $uidvalidity);
+	my $uid = sprintf('%08lx%08lx', $hash, $uidvalidity);
 	debug("Calculated mailbox UID for $box: $uid");
 	return $uid;
 }
 
 # ----- Dovecot subroutines. ---------------------------------------------------
 
+sub _d_convert_mail ($$);
+sub _d_make_filename ($$$$);
 sub _d_make_maildir ($);
 sub _d_touch_maildirfolder ($);
 sub _d_write_maildirsize ($$);
 sub _d_write_subscriptions ($$);
 sub _d_write_keywords ($$);
-sub _d_create_filename ($$$$);
 
 #
 # Create the Maildir++ folder including all subfolders, write the metadata, and
@@ -1036,23 +1057,25 @@ sub _d_create_filename ($$$$);
 #
 sub d_write_mailbox ($$$) {
 	my ($meta, $c_rootdir, $d_rootdir) = @_;
+	my %folders;
 
 	#
 	# The Maildir++ filenames we create include a random number.  We call
 	# srand(3) in order to re-create the same filenames if the conversion
 	# is repeated for some reason.
 	#
-	srand($meta->{box}->{'INBOX'}->{uidvalidity});
+	srand($meta->{box}->{'&INBOX'}->{uidvalidity});
 
 	debug('Writing Dovecot folders.');
 	foreach my $c_box (keys %{ $meta->{box} }) {
-		my ($c_boxpath, $d_boxpath);
-		my $d_box = $c_box;
+		my ($c_boxpath, $d_boxpath, $d_box);
 
-		if ($d_box eq 'INBOX') {
+		if ($c_box eq '&INBOX') {
 			$c_boxpath = $c_rootdir;
+			$d_box = 'INBOX';
 		} else {
 			$c_boxpath = "$c_rootdir/$c_box";
+			$d_box = $c_box;
 			$d_box =~ s/\//./g;
 			$d_box = ".$d_box";
 		}
@@ -1066,6 +1089,12 @@ sub d_write_mailbox ($$$) {
 			debug('New folder name:', $d_box);
 		}
 
+		# Maildir/.INBOX cannot be accessed via Dovecot.
+		warning("Non-INBOX folder named $d_box not accessible, try:",
+		    '--edit-foldernames \'s/^\.(INBOX)$/.$1-moved/i\'')
+		    if uc($d_box) eq '.INBOX';
+
+		# Now, we know the final Maildir++ pathname.
 		$d_boxpath = ($d_box eq 'INBOX') ?
 		    $d_rootdir : "$d_rootdir/$d_box";
 
@@ -1077,15 +1106,15 @@ sub d_write_mailbox ($$$) {
 		my $uidfile = "$d_boxpath/dovecot-uidlist";
 
 		# Open the dovecot-uidlist file.
-		open(my $ufh, '>', $uidfile)
+		open(my $uidfh, '>', $uidfile)
 		    or error("Cannot open $uidfile: $!");
 
 		# Write the dovecot-uidlist header line.
 		if ($CONF{dovecot_uidlist_format} == 1) {
-			print $ufh "1 $box->{uidvalidity} $box->{uidnext}\n"
+			print $uidfh "1 $box->{uidvalidity} $box->{uidnext}\n"
 			    or error("Cannot write $uidfile: $!");
 		} elsif ($CONF{dovecot_uidlist_format} == 3) {
-			print $ufh "3 V$box->{uidvalidity} N$box->{uidnext}\n"
+			print $uidfh "3 V$box->{uidvalidity} N$box->{uidnext}\n"
 			    or error("Cannot write $uidfile: $!");
 		} else {
 			error('Unknown dovecot-uidlist format:',
@@ -1098,17 +1127,7 @@ sub d_write_mailbox ($$$) {
 			my $d_temppath = "$d_boxpath/tmp/$MYSELF.$$.$MAILS";
 
 			# Convert the e-mail.
-			open(my $cfh, '<', $c_mailpath)
-			    or error("Cannot open $c_mailpath: $!");
-			open(my $dfh, '>', $d_temppath)
-			    or error("Cannot open $d_temppath: $!");
-			while (<$cfh>) {
-				s/\r\n/\n/ unless $CONF{dovecot_crlf};
-				print $dfh $_
-				    or error("Cannot write $d_temppath: $!");
-			}
-			close($cfh) or error("Cannot close $c_mailpath: $!");
-			close($dfh) or error("Cannot close $d_temppath: $!");
+			_d_convert_mail($c_mailpath, $d_temppath);
 
 			#
 			# Create the Maildir++ e-mail filename.  Include the
@@ -1140,7 +1159,7 @@ sub d_write_mailbox ($$$) {
 			my $size = $d_stat[7];	# File size with LF.
 			my $vsize = $c_stat[7];	# File size with CR+LF.
 			my $subdir = ($uid > $box->{nonrecent}) ? 'new' : 'cur';
-			my $d_mail = _d_create_filename($attr, $size, $vsize,
+			my $d_mail = _d_make_filename($attr, $size, $vsize,
 			    $#{ $box->{keywords} });
 			my $d_mailpath = "$d_boxpath/$subdir/$d_mail";
 
@@ -1153,10 +1172,10 @@ sub d_write_mailbox ($$$) {
 
 			# Add the e-mail to the dovecot-uidlist.
 			if ($CONF{dovecot_uidlist_format} == 1) {
-				print $ufh "$uid $d_mail\n"
+				print $uidfh "$uid $d_mail\n"
 				    or error("Cannot write $uidfile: $!");
 			} elsif ($CONF{dovecot_uidlist_format} == 3) {
-				print $ufh "$uid :$d_mail\n"
+				print $uidfh "$uid :$d_mail\n"
 				    or error("Cannot write $uidfile: $!");
 			} else {
 				error('Unknown dovecot-uidlist format:',
@@ -1165,114 +1184,43 @@ sub d_write_mailbox ($$$) {
 			$SIZE += $size;
 			$MAILS++;
 		}
-		close($ufh) or error("Cannot close $uidfile: $!");
+		close($uidfh) or error("Cannot close $uidfile: $!");
 		_d_write_keywords($box->{keywords}, $d_boxpath);
+		$folders{$d_box}++;
 		$FOLDERS++;
 	}
 	_d_write_subscriptions($meta->{subscriptions}, $d_rootdir);
 	_d_write_maildirsize($d_rootdir, $meta->{quota}) if $meta->{quota};
+
+	foreach my $folder (keys %folders) {
+		error("Folder name not unique after editing: $folder")
+		    if $folders{$folder} > 1;
+	}
 	debug('Done writing Dovecot folders.');
 }
 
 #
-# Create the specified Maildir, including the "new, "cur", and "tmp" Maildir
-# subdirectories as well as all parent directories as needed.  Die on error.
+# Copy the given e-mail file, and replace any CR+LF with a plain LF unless
+# $CONF{dovecot_crlf} is true.
 #
-sub _d_make_maildir ($) {
-	my $maildir = shift;
-	my $new = "$maildir/new";
-	my $cur = "$maildir/cur";
-	my $tmp = "$maildir/tmp";
+sub _d_convert_mail ($$) {
+	my ($ifile, $ofile) = @_;
 
-	debug('Creating Maildir:', $maildir);
-	makedir($_) for $maildir, $new, $cur, $tmp;
-}
-
-#
-# Create an empty "maildirfolder" file within the given Maildir.  Die on error.
-#
-sub _d_touch_maildirfolder ($) {
-	my $maildir = shift;
-	my $file = "$maildir/maildirfolder";
-
-	open(my $handle, '>', $file) or error("Cannot touch $file: $!");
-	close($handle) or error("Cannot close $file: $!");
-	debug('Touched:', $file);
-}
-
-#
-# Write the maildirsize file.  Die on error.  See also:
-#
-# http://www.inter7.com/courierimap/README.maildirquota.html
-#
-sub _d_write_maildirsize ($$) {
-	my ($rootdir, $quota) = @_;
-	my $file = "$rootdir/maildirsize";
-
-	debug('Writing:', $file);
-	open(my $handle, '>', $file) or error("Cannot open $file: $!");
-	print $handle $quota . "S\n";
-	print $handle $SIZE . " $MAILS\n";
-	close($handle) or error("Cannot close $file: $!");
-	debug('Done writing:', $file);
-}
-
-#
-# Write the subscriptions file.  Die on error.
-#
-sub _d_write_subscriptions ($$) {
-	my ($subscriptions, $rootdir) = @_;
-	my $file = "$rootdir/subscriptions";
-
-	debug('Writing:', $file);
-	open(my $handle, '>', $file) or error("Cannot open $file: $!");
-	foreach my $subscription (@$subscriptions) {
-		# Add a leading dot for "--edit-foldernames".
-		$subscription = ".$subscription"
-		    unless $subscription eq 'INBOX';	# Usually not necessary.
-		# Edit the subscribed folder name if desired.
-		foreach my $operation (@{ $CONF{edit_foldernames} }) {
-			debug("Editing subscription $subscription: $operation");
-			my $r = eval("\$subscription =~ $operation");
-			error("Cannot evaluate $operation: $@") if $@;
-			error("Cannot evaluate $operation.") if not defined($r);
-			debug('New subscription:', $subscription);
-		}
-		# Remove the leading dot we added (if there still is one).
-		$subscription =~ s/^\.//;
-		print $handle "$subscription\n"
-		    or error("Cannot write $file: $!");
-		debug('Subscribed:', $subscription);
+	open(my $ifh, '<', $ifile) or error("Cannot open $ifile: $!");
+	open(my $ofh, '>', $ofile) or error("Cannot open $ofile: $!");
+	while (<$ifh>) {
+		s/\r\n/\n/ unless $CONF{dovecot_crlf};
+		print $ofh $_ or error("Cannot write $ofile: $!");
 	}
-	close($handle) or error("Cannot close $file: $!");
-	debug('Done writing:', $file);
-}
-
-#
-# Write the dovecot-keywords file.  Die on error.
-#
-sub _d_write_keywords ($$) {
-	my ($keywords, $boxpath) = @_;
-	my $file = "$boxpath/dovecot-keywords";
-
-	return if @$keywords == 0;	# No keywords defined.
-
-	debug('Writing:', $file);
-	open(my $handle, '>', $file) or error("Cannot open $file: $!");
-	for (my $i = 0; $i <= $#{ $keywords }; $i++) {
-		print $handle "$i $keywords->[$i]\n"
-		    or error("Cannot write $file: $!");
-		debug('Added keyword:', $keywords->[$i]);
-	}
-	close($handle) or error("Cannot close $file: $!");
-	debug('Done writing:', $file);
+	close($ifh) or error("Cannot close $ifile: $!");
+	close($ofh) or error("Cannot close $ofile: $!");
 }
 
 #
 # Create and return a Maildir++ e-mail filename including the flags and the size
 # fields used by Dovecot.
 #
-sub _d_create_filename ($$$$) {
+sub _d_make_filename ($$$$) {
 	my ($attr, $size, $vsize, $maxkeyword) = @_;
 	my @alphabet = ('a' .. 'z');
 	my $filename = sprintf('%u.R%08xQ%u.%s,S=%u,W=%u:2,',
@@ -1294,6 +1242,101 @@ sub _d_create_filename ($$$$) {
 	return $filename;
 }
 
+#
+# Create the specified Maildir, including the "new, "cur", and "tmp" Maildir
+# subdirectories as well as parent directories as needed.  Bail out on error.
+#
+sub _d_make_maildir ($) {
+	my $maildir = shift;
+	my $new = "$maildir/new";
+	my $cur = "$maildir/cur";
+	my $tmp = "$maildir/tmp";
+
+	debug('Creating Maildir:', $maildir);
+	makedir($_) for $maildir, $new, $cur, $tmp;
+}
+
+#
+# Create an empty "maildirfolder" file within the given Maildir.  Bail out on
+# error.
+#
+sub _d_touch_maildirfolder ($) {
+	my $maildir = shift;
+	my $file = "$maildir/maildirfolder";
+
+	open(my $handle, '>', $file) or error("Cannot touch $file: $!");
+	close($handle) or error("Cannot close $file: $!");
+	debug('Touched:', $file);
+}
+
+#
+# Write the maildirsize file.  Bail out on error.  See also:
+#
+# http://www.inter7.com/courierimap/README.maildirquota.html
+#
+sub _d_write_maildirsize ($$) {
+	my ($rootdir, $quota) = @_;
+	my $file = "$rootdir/maildirsize";
+
+	debug('Writing:', $file);
+	open(my $handle, '>', $file) or error("Cannot open $file: $!");
+	print $handle $quota . "S\n";
+	print $handle $SIZE . " $MAILS\n";
+	close($handle) or error("Cannot close $file: $!");
+	debug('Done writing:', $file);
+}
+
+#
+# Write the subscriptions file.  Bail out on error.
+#
+sub _d_write_subscriptions ($$) {
+	my ($subscriptions, $rootdir) = @_;
+	my $file = "$rootdir/subscriptions";
+
+	debug('Writing:', $file);
+	open(my $handle, '>', $file) or error("Cannot open $file: $!");
+	foreach my $subscription (@$subscriptions) {
+		# Add a leading dot for "--edit-foldernames".
+		$subscription = ($subscription eq '&INBOX') ?
+		    'INBOX' : ".$subscription";
+		# Edit the subscribed folder name if desired.
+		foreach my $operation (@{ $CONF{edit_foldernames} }) {
+			debug("Editing subscription $subscription: $operation");
+			my $r = eval("\$subscription =~ $operation");
+			error("Cannot evaluate $operation: $@") if $@;
+			error("Cannot evaluate $operation.") if not defined($r);
+			debug('New subscription:', $subscription);
+		}
+		# Remove the leading dot we added (if there still is one).
+		$subscription =~ s/^\.//;
+		print $handle "$subscription\n"
+		    or error("Cannot write $file: $!");
+		debug('Subscribed:', $subscription);
+	}
+	close($handle) or error("Cannot close $file: $!");
+	debug('Done writing:', $file);
+}
+
+#
+# Write the dovecot-keywords file.  Bail out on error.
+#
+sub _d_write_keywords ($$) {
+	my ($keywords, $boxpath) = @_;
+	my $file = "$boxpath/dovecot-keywords";
+
+	return if @$keywords == 0;	# No keywords defined.
+
+	debug('Writing:', $file);
+	open(my $handle, '>', $file) or error("Cannot open $file: $!");
+	for (my $i = 0; $i <= $#{ $keywords }; $i++) {
+		print $handle "$i $keywords->[$i]\n"
+		    or error("Cannot write $file: $!");
+		debug('Added keyword:', $keywords->[$i]);
+	}
+	close($handle) or error("Cannot close $file: $!");
+	debug('Done writing:', $file);
+}
+
 __END__
 
 =head1 NAME
@@ -1303,7 +1346,7 @@ cyrus2dovecot - convert Cyrus folders to Dovecot
 =head1 SYNOPSIS
 
 B<cyrus2dovecot>
-[B<-cdmq>]
+[B<-cdmq>[B<q>]]
 S<[B<-C> I<cyrus-inbox>]>
 S<[B<-D> I<dovecot-inbox>]>
 S<[B<-E> I<edit-foldernames>]>
@@ -1314,6 +1357,8 @@ S<[B<-O> I<cyrus-quota-format>]>
 S<[B<-Q> I<cyrus-quota>]>
 S<[B<-S> I<cyrus-seen>]>
 S<[B<-U> I<cyrus-sub>]>
+S<[B<-X> I<cyrus-database-dir>]>
+S<[B<-Y> I<cyrus-quota-dir>]>
 [I<user> ...]
 
 B<cyrus2dovecot>
@@ -1374,7 +1419,7 @@ standard output.
 Apply the specified I<SUBSTITUTION> to the name of each Maildir++ folder
 and subscription using Perl code such as
 S<C<eval('$name=~'.$substitution)>>, where $name holds either the string
-F<INBOX> (which denotes the main Maildir) or the full Maildir++ folder
+"INBOX" (which denotes the main Maildir) or the full Maildir++ folder
 name (e.g., F<.sub.folder>), and $substitution holds the specified
 I<SUBSTITUTION>.  The resulting $name will be used as the Maildir++
 folder's name.  This option may be specified multiple times, in which
@@ -1389,8 +1434,8 @@ order to simplify the matching.
 =item B<-F>, B<--dovecot-uidlist-format=>I<VERSION>
 
 Create the F<dovecot-uidlist> files using this format I<VERSION>.  For
-Dovecot releases older than 1.0.2, I<VERSION> 1 must be specified;
-otherwise, I<VERSION> 3 can be used.
+Dovecot releases older than 1.0.2, I<VERSION> C<1> must be specified;
+otherwise, I<VERSION> C<3> can be used.
 
 =item B<-H>, B<--dovecot-host=>I<NAME>
 
@@ -1416,12 +1461,12 @@ specified.
 
 =item B<-O>, B<--cyrus-quota-format=>I<VERSION>
 
-Expect the quota database file specified via B<--cyrus-quota> to be
-present in this format I<VERSION>, where I<VERSION> C<1> denotes the
-"quotalegacy" format and I<VERSION> C<2> denotes the "skiplist" or the
-"flat" text format (B<cyrus2dovecot> will autodetect which of those two
-formats is used if I<VERSION> 2 is specified).  This option is ignored
-if B<--cyrus-quota> is not specified.
+Expect Cyrus' quota database(s) to be present in this format I<VERSION>,
+where I<VERSION> C<1> denotes the "quotalegacy" format and I<VERSION>
+C<2> denotes the "skiplist" or the "flat" text format (which of those
+two formats is used will be autodetected if I<VERSION> C<2> is
+specified).  This option is ignored if B<--cyrus-quota> is not
+specified.
 
 =item B<-Q>, B<--cyrus-quota=>I<PATH>
 
@@ -1431,9 +1476,12 @@ found in that file.
 
 =item B<-q>, B<--quiet>
 
-Suppress the line usually printed to the standard output for each
-I<user> whose e-mails were successfully converted.  Error messages, if
-any, will still be printed to the standard error output.
+Suppress any messages usually printed to the standard output (namely
+regarding nonexistent Cyrus database files) except for the line
+generated for each I<user> whose e-mails were successfully converted.
+If this option is specified twice, the latter line will also be omitted.
+In either case, warning and error messages, if any, will still be
+printed to the standard error output.
 
 =item B<-S>, B<--cyrus-seen=>I<PATH>
 
@@ -1450,6 +1498,16 @@ Cyrus.
 
 Print version information to the standard output and exit.
 
+=item B<-X>, B<--cyrus-database-dir=>I<PATH>
+
+Set B<--cyrus-seen=>I<PATH>F</%u.seen> and
+B<--cyrus-sub=>I<PATH>F</%u.sub>.  The latter options override this one.
+
+=item B<-Y>, B<--cyrus-quota-dir=>I<PATH>
+
+Set B<--cyrus-quota=>I<PATH>F</user.%u> and
+B<--cyrus-quota-format=>C<1>.  The latter options override this one.
+
 =back
 
 =head1 RETURN VALUE
@@ -1462,57 +1520,39 @@ a fatal error occurs, B<cyrus2dovecot> exits E<gt>0 immediately.
 
 =head1 EXAMPLES
 
-Given that the default settings specified at the top of the
-B<cyrus2dovecot> script are correct and that F</tmp/users> holds the
-names of all I<user>s whose e-mails should be converted (one per line),
-the following command would convert all e-mails of those I<user>s from
-Cyrus to Dovecot:
-
-	cyrus2dovecot < /tmp/users
-
-Given that the path to the INBOX in Cyrus is F</var/spool/imap/user/%u>
-(where C<%u> denotes the I<user> name), that Cyrus stores the seen and
-subscription databases within the directory F</var/imap/user/%h>, and
-that Cyrus stores "quotalegacy" files within the directory
-F</var/imap/quota/%h> (where C<%h> denotes Cyrus' directory "hash"
-character for that I<user> name, respectively), the following command
-would convert all e-mails of the I<user>s "bill" and "george" from Cyrus
-to Dovecot, and the result would be stored below F</tmp/dovecot>
-(including F<maildirsize> files for both users if their quota limits are
-found):
+Given that the path to the INBOX folders in Cyrus is
+F</var/spool/imap/user/%u> (where C<%u> denotes the I<user> name), that
+Cyrus stores the seen and subscription databases within the directory
+F</var/imap/user/%h>, and that Cyrus stores "quotalegacy" files within
+the directory F</var/imap/quota/%h> (where C<%h> denotes Cyrus'
+directory "hash" character for that I<user> name, respectively), the
+following command would convert all e-mails of the I<user>s "bill" and
+"george" from Cyrus to Dovecot, and the result would be stored below
+F</tmp/dovecot> (including F<maildirsize> files for both users if their
+quota limits are found):
 
 	cyrus2dovecot --cyrus-inbox /var/spool/imap/user/%u     \
-	              --cyrus-seen /var/imap/user/%h/%u.seen    \
-	              --cyrus-sub /var/imap/user/%h/%u.sub      \
-	              --cyrus-quota /var/imap/quota/%h/user.%u  \
-	              --cyrus-quota-format 1                    \
+	              --cyrus-database-dir /var/imap/user/%h    \
+	              --cyrus-quota-dir /var/imap/quota/%h      \
 	              --dovecot-inbox /tmp/dovecot/%u/Maildir   \
 	              bill george
 
-A script such as the following could be used in order to convert all
-e-mails of all I<user>s (of course, the pathnames and the desired quota
-limit may have to be adjusted, and if the C<hashimapspool> option is
-enabled in the Cyrus configuration, F</?> must be appended to the $in
-path):
+Given that the default settings specified at the top of the
+B<cyrus2dovecot> script are correct, and that F</tmp/users> holds the
+names of all I<user>s whose e-mails should be converted (one per line),
+the following command would convert all e-mails of those I<user>s:
 
-	#!/bin/sh
+	cyrus2dovecot < /tmp/users
 
-	in=/var/spool/imap/user         # Cyrus INBOXes.
-	db=/var/imap/user/?             # Cyrus seen/subscription files.
-	out=/tmp/dovecot                # Dovecot Maildirs.
-	log=/tmp/conversion.log         # Log of successful conversions.
-	err=/tmp/error.log              # Log of conversion errors.
-	quota=2147483648                # 2 GiB quota (for maildirsize).
+Given that the default settings specified at the top of the
+B<cyrus2dovecot> script are correct, a command such as the following
+could be used in order to convert all e-mails of all I<user>s (of
+course, the path to the INBOX folders in Cyrus may have to be adjusted;
+e.g., if the C<hashimapspool> option is not enabled in the Cyrus
+configuration, F</?> must be removed from the path):
 
-	for u in `find $in/. \! -name . -prune -exec basename \{\} \;`
-	do
-		cyrus2dovecot --cyrus-inbox $in/$u              \
-			      --cyrus-seen $db/$u.seen          \
-			      --cyrus-sub $db/$u.sub            \
-			      --default-quota $quota            \
-			      --dovecot-inbox $out/$u/Maildir   \
-			      $u 2>&1 >>$log | tee -a $err >&2
-	done
+	find /var/spool/imap/user/?/. \! -name . -prune \
+	     -exec basename \{\} \; | cyrus2dovecot
 
 In order to create all folders (except for the INBOX) as subfolders of
 the INBOX in Dovecot, the following argument could be added to the
@@ -1542,8 +1582,8 @@ with slashes:
 	--edit-foldernames 's/\./\//g'
 
 If the seen states, subscriptions, or quotas are stored in Berkeley
-databases, they must first be converted for B<cyrus2dovecot> using a
-command such as the following:
+databases, they must first be converted to one of the formats supported
+by B<cyrus2dovecot> using a command such as the following:
 
 	cvt_cyrusdb /var/imap/user/b/bill.seen berkeley \
 	            /tmp/imap/user/b/bill.seen skiplist
@@ -1606,6 +1646,15 @@ FITNESS FOR A PARTICULAR PURPOSE.
 =head1 HISTORY
 
 	$Log: cyrus2dovecot,v $
+	Revision 1.3  2008/10/05 17:45:06  holger
+	If a seen state, subscription, or quota database is not found, a
+	message will now be printed.  As this does not necessarily
+	indicate a problem, such messages can be suppressed by
+	specifying the "--quiet" option.  Apart from that, the
+	"--cyrus-database-dir" and "--cyrus-quota-dir" options (which
+	are merely convenience aliases) have been added, and various
+	minor enhancements have been applied.
+
 	Revision 1.2  2008/09/24 09:52:33  holger
 	Message seen states are now parsed more efficiently with regard
 	to performance and memory usage.  Apart from that, minor code
