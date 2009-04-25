@@ -1218,7 +1218,7 @@ sub _d_convert_mail ($$) {
 	open(my $ifh, '<', $ifile) or error("Cannot open $ifile: $!");
 	open(my $ofh, '>', $ofile) or error("Cannot open $ofile: $!");
 	while (<$ifh>) {
-		s/\r\n/\n/ unless $CONF{dovecot_crlf};
+		s/\r+\n/\n/ unless $CONF{dovecot_crlf};
 		print $ofh $_ or error("Cannot write $ofile: $!");
 	}
 	close($ifh) or error("Cannot close $ifile: $!");
