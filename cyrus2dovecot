@@ -630,8 +630,8 @@ sub c_read_mailbox ($$$$$) {
 		$existing{$folder} = 1;
 	}
 	foreach my $folder (keys %{ c_read_skiplist($subfile) }) {
-		$folder =~ s/^user\.\Q$USER\E$/&INBOX/;
-		$folder =~ s/^user\.\Q$USER\E\.//;
+		$folder =~ s/^(?:.*!)?user\.\Q$USER\E$/&INBOX/;
+		$folder =~ s/^(?:.*!)?user\.\Q$USER\E\.//;
 		push(@subscriptions, $folder) if $existing{$folder};
 	}
 	$meta->{subscriptions} = \@subscriptions;
