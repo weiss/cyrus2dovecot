@@ -395,7 +395,7 @@ sub slurp ($) {
 }
 
 #
-# Resolve "%u", "%h", "x", and "%<n>u" within pathnames.  Modify the specified
+# Resolve "%u", "%h", "%x", and "%<n>u" within pathnames.  Modify the specified
 # arguments directly (as opposed to returning the new pathnames).
 #
 sub fixpath ($$@) {
