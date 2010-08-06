@@ -1572,12 +1572,6 @@ configuration, F</?> must be removed from the path):
 	find /var/spool/imap/user/?/. \! -name . -prune \
 	     -exec basename \{\} \; | cyrus2dovecot
 
-In order to create all folders (except for the INBOX) as subfolders of
-the INBOX in Dovecot, the following argument could be added to the
-B<cyrus2dovecot> command line:
-
-	--edit-foldernames 's/^\./.INBOX./'
-
 Cyrus transparently replaces any "." character in folder names with a
 "^" character.  Dovecot supports "." characters in Maildir++ folder
 names if the "listescape" plugin is used, which replaces any "."
