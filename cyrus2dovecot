@@ -21,6 +21,7 @@
 require 5.006;	# We need Perl >= 5.6.0 for our open() calls.
 
 use strict;
+use IO::Zlib;
 use warnings;
 use Data::Dumper;
 use File::Basename;
@@ -50,6 +51,7 @@ my %DEFAULT = (
 	dovecot_uidlist_format => 3,    # Create this dovecot-uidlist format.
 	dovecot_host => hostname,       # The host name for Maildir++ filenames.
 	dovecot_crlf => 0,              # Use CR+LF instead of LF in Dovecot?
+	dovecot_zlib => 0,              # Use zlib compressed mails in Dovecot?
 	default_quota => 0,             # Use this quota as fallback (0: none).
 	dump_meta => 0,                 # Print the metadata structure?
 	debug => 0,                     # Print debug output?
@@ -178,6 +180,7 @@ GetOptions(
 	'dovecot_host|dovecot-host|H=s',
 	'dovecot_uidlist_format|dovecot-uidlist-format|F=i',
 	'dovecot_crlf|dovecot-crlf|c',
+        'dovecot_zlib|dovecot-zlib|z',
 	'dump_meta|dump-meta|m',
 	'quiet|q+',
 	'debug|d',
@@ -1214,9 +1217,15 @@ sub d_write_mailbox ($$$) {
 #
 sub _d_convert_mail ($$) {
 	my ($ifile, $ofile) = @_;
+        my $ofh;
 
 	open(my $ifh, '<', $ifile) or error("Cannot open $ifile: $!");
-	open(my $ofh, '>', $ofile) or error("Cannot open $ofile: $!");
+        if ($CONF{dovecot_zlib}) {
+		$ofh = IO::Zlib->new("${ofile}.gz", "wb6");
+        }
+        else {
+		open($ofh, '>', $ofile) or error("Cannot open $ofile: $!");
+        };
 	while (<$ifh>) {
 		s/\r+\n/\n/ unless $CONF{dovecot_crlf};
 		print $ofh $_ or error("Cannot write $ofile: $!");
@@ -1363,6 +1372,7 @@ S<[B<-D> I<dovecot-inbox>]>
 S<[B<-E> I<edit-foldernames>]>
 S<[B<-F> I<dovecot-uidlist-format>]>
 S<[B<-H> I<dovecot-host>]>
+S<[B<-z> I<dovecot-zlib>]>
 S<[B<-N> I<default-quota>]>
 S<[B<-O> I<cyrus-quota-format>]>
 S<[B<-Q> I<cyrus-quota>]>
@@ -1434,6 +1444,10 @@ Use this I<PATH> to the I<user>'s INBOX folder in Cyrus.
 Store e-mails with C<CR+LF> instead of plain C<LF>.  This flag should be
 specified if the C<mail_save_crlf> option is set to C<yes> in the
 Dovecot configuration.
+
+=item B<-z>, B<--dovecot-zlib>
+
+Store e-mails zlib compressed instead of plain.
 
 =item B<-D>, B<--dovecot-inbox=>I<PATH>
 
