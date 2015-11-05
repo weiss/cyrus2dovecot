@@ -1372,9 +1372,9 @@ S<[B<-B> I<cyrus-quota-dir>]>
 S<[B<-O> I<cyrus-quota-format>]>
 S<[B<-S> I<cyrus-seen>]>
 S<[B<-U> I<cyrus-sub>]>
+S<[B<-H> I<dovecot-host>]>
 S<[B<-D> I<dovecot-inbox>]>
 S<[B<-F> I<dovecot-uidlist-format>]>
-S<[B<-H> I<dovecot-host>]>
 S<[B<-z> I<dovecot-zlib>]>
 S<[B<-N> I<default-quota>]>
 S<[B<-E> I<edit-foldernames>]>
@@ -1419,25 +1419,41 @@ B<cyrus2dovecot> script.
 Set B<--cyrus-seen=>I<PATH>F</%u.seen> and
 B<--cyrus-sub=>I<PATH>F</%u.sub>.  The latter options override this one.
 
+=item B<-C>, B<--cyrus-inbox=>I<PATH>
+
+Use this I<PATH> to the I<user>'s INBOX folder in Cyrus.
+
+=item B<-Q>, B<--cyrus-quota=>I<PATH>
+
+Use this I<PATH> to the quota database file in Cyrus, and create a
+Maildir++ F<maildirsize> file for each I<user> whose quota limit is
+found in that file.
+
 =item B<-B>, B<--cyrus-quota-dir=>I<PATH>
 
 Set B<--cyrus-quota=>I<PATH>F</user.%u> and
 B<--cyrus-quota-format=>C<1>.  The latter options override this one.
 
-=item B<-b>, B<--bail>
+=item B<-O>, B<--cyrus-quota-format=>I<VERSION>
 
-Bail out immediately on any warnings and errors.  If this flag is not
-specified and a warning occurs, B<cyrus2dovecot> prints a message to the
-standard error output and then tries to continue the conversion.  If
-this flag is not specified and a non-fatal error occurs,
-B<cyrus2dovecot> prints a message to the standard error output and then
-tries to convert the e-mails of the remaining I<user>s (if any).  (Note
-that B<cyrus2dovecot> always bails out immediately on warnings generated
-by the Perl interpreter, as they indicate B<cyrus2dovecot> bugs.)
+Expect Cyrus' quota database(s) to be present in this format I<VERSION>,
+where I<VERSION> C<1> denotes the "quotalegacy" format and I<VERSION>
+C<2> denotes the "skiplist" or the "flat" text format (which of those
+two formats is used will be autodetected if I<VERSION> C<2> is
+specified).  This option is ignored if B<--cyrus-quota> is not
+specified.
 
-=item B<-C>, B<--cyrus-inbox=>I<PATH>
+=item B<-S>, B<--cyrus-seen=>I<PATH>
 
-Use this I<PATH> to the I<user>'s INBOX folder in Cyrus.
+Use this I<PATH> to the I<user>'s seen database file in Cyrus.  If an
+"old-style" F<cyrus.seen> file exists within each Cyrus folder (as opposed to a
+central F<cyrus.seen> database for all folders of a I<user>), F<cyrus.seen>
+must be specified (literally) as the I<PATH>.
+
+=item B<-U>, B<--cyrus-sub=>I<PATH>
+
+Use this I<PATH> to the I<user>'s subscription database file in
+Cyrus.
 
 =item B<-c>, B<--dovecot-crlf>
 
@@ -1445,18 +1461,23 @@ Store e-mails with C<CR+LF> instead of plain C<LF>.  This flag should be
 specified if the C<mail_save_crlf> option is set to C<yes> in the
 Dovecot configuration.
 
-=item B<-z>, B<--dovecot-zlib>
+=item B<-H>, B<--dovecot-host=>I<NAME>
 
-Store e-mails zlib compressed instead of plain.
+Use this host I<NAME> for the Maildir++ e-mail file's basename.
 
 =item B<-D>, B<--dovecot-inbox=>I<PATH>
 
 Use this I<PATH> to the I<user>'s INBOX folder in Dovecot.
 
-=item B<-d>, B<--debug>
+=item B<-F>, B<--dovecot-uidlist-format=>I<VERSION>
 
-Print information which is usually only useful for debugging to the
-standard output.
+Create the F<dovecot-uidlist> files using this format I<VERSION>.  For
+Dovecot releases older than 1.0.2, I<VERSION> C<1> must be specified;
+otherwise, I<VERSION> C<3> can be used.
+
+=item B<-z>, B<--dovecot-zlib>
+
+Store e-mails zlib compressed instead of plain.
 
 =item B<-E>, B<--edit-foldernames=>I<SUBSTITUTION>
 
@@ -1475,25 +1496,6 @@ subscribed subfolder name before applying the specified
 I<SUBSTITUTION>(s) and removes it afterwards (if it still exists) in
 order to simplify the matching.
 
-=item B<-F>, B<--dovecot-uidlist-format=>I<VERSION>
-
-Create the F<dovecot-uidlist> files using this format I<VERSION>.  For
-Dovecot releases older than 1.0.2, I<VERSION> C<1> must be specified;
-otherwise, I<VERSION> C<3> can be used.
-
-=item B<-H>, B<--dovecot-host=>I<NAME>
-
-Use this host I<NAME> for the Maildir++ e-mail file's basename.
-
-=item B<-h>, B<--help>
-
-Print usage information to the standard output and exit.
-
-=item B<-m>, B<--dump-meta>
-
-Print a dump of the data structure which holds the metadata gathered
-from scanning the Cyrus folders of a user to the standard output.
-
 =item B<-N>, B<--default-quota=>I<BYTES>
 
 Create a Maildir++ F<maildirsize> file for each I<user>, and set the
@@ -1503,20 +1505,15 @@ the B<--default-quota> limit.  Specifying C<0> I<BYTES> disables the
 creation of F<maildirsize> files unless B<--cyrus-quota> is also
 specified.
 
-=item B<-O>, B<--cyrus-quota-format=>I<VERSION>
+=item B<-m>, B<--dump-meta>
 
-Expect Cyrus' quota database(s) to be present in this format I<VERSION>,
-where I<VERSION> C<1> denotes the "quotalegacy" format and I<VERSION>
-C<2> denotes the "skiplist" or the "flat" text format (which of those
-two formats is used will be autodetected if I<VERSION> C<2> is
-specified).  This option is ignored if B<--cyrus-quota> is not
-specified.
+Print a dump of the data structure which holds the metadata gathered
+from scanning the Cyrus folders of a user to the standard output.
 
-=item B<-Q>, B<--cyrus-quota=>I<PATH>
+=item B<-d>, B<--debug>
 
-Use this I<PATH> to the quota database file in Cyrus, and create a
-Maildir++ F<maildirsize> file for each I<user> whose quota limit is
-found in that file.
+Print information which is usually only useful for debugging to the
+standard output.
 
 =item B<-q>, B<--quiet>
 
@@ -1527,17 +1524,20 @@ If this option is specified twice, the latter line will also be omitted.
 In either case, warning and error messages, if any, will still be
 printed to the standard error output.
 
-=item B<-S>, B<--cyrus-seen=>I<PATH>
+=item B<-b>, B<--bail>
 
-Use this I<PATH> to the I<user>'s seen database file in Cyrus.  If an
-"old-style" F<cyrus.seen> file exists within each Cyrus folder (as opposed to a
-central F<cyrus.seen> database for all folders of a I<user>), F<cyrus.seen>
-must be specified (literally) as the I<PATH>.
+Bail out immediately on any warnings and errors.  If this flag is not
+specified and a warning occurs, B<cyrus2dovecot> prints a message to the
+standard error output and then tries to continue the conversion.  If
+this flag is not specified and a non-fatal error occurs,
+B<cyrus2dovecot> prints a message to the standard error output and then
+tries to convert the e-mails of the remaining I<user>s (if any).  (Note
+that B<cyrus2dovecot> always bails out immediately on warnings generated
+by the Perl interpreter, as they indicate B<cyrus2dovecot> bugs.)
 
-=item B<-U>, B<--cyrus-sub=>I<PATH>
+=item B<-h>, B<--help>
 
-Use this I<PATH> to the I<user>'s subscription database file in
-Cyrus.
+Print usage information to the standard output and exit.
 
 =item B<-v>, B<--version>
 
