@@ -1364,20 +1364,20 @@ cyrus2dovecot - convert Cyrus folders to Dovecot
 =head1 SYNOPSIS
 
 B<cyrus2dovecot>
-[B<-bcdmq>[B<q>]]
+[B<-bcdmvq>[B<q>]]
 S<[B<-A> I<cyrus-database-dir>]>
-S<[B<-B> I<cyrus-quota-dir>]>
 S<[B<-C> I<cyrus-inbox>]>
+S<[B<-Q> I<cyrus-quota>]>
+S<[B<-B> I<cyrus-quota-dir>]>
+S<[B<-O> I<cyrus-quota-format>]>
+S<[B<-S> I<cyrus-seen>]>
+S<[B<-U> I<cyrus-sub>]>
 S<[B<-D> I<dovecot-inbox>]>
-S<[B<-E> I<edit-foldernames>]>
 S<[B<-F> I<dovecot-uidlist-format>]>
 S<[B<-H> I<dovecot-host>]>
 S<[B<-z> I<dovecot-zlib>]>
 S<[B<-N> I<default-quota>]>
-S<[B<-O> I<cyrus-quota-format>]>
-S<[B<-Q> I<cyrus-quota>]>
-S<[B<-S> I<cyrus-seen>]>
-S<[B<-U> I<cyrus-sub>]>
+S<[B<-E> I<edit-foldernames>]>
 [I<user> ...]
 
 B<cyrus2dovecot>
